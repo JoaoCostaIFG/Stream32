@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const test = require('node:test');
 
-const { runStatusCommand } = require('../src/status-command');
+const { runStatusCommand, runStatusJsonCommand } = require('../src/status-command');
 
 // `exit <n>` is one of the few command lines both sh and cmd.exe agree on, so
 // these run unchanged on all three platforms the app is packaged for.
@@ -69,5 +69,50 @@ test('the timeout takes the whole command, not just its shell', async (t) => {
 test('a command that cannot be a command is refused before spawning', () => {
   for (const command of ['', '   ', undefined, 42, 'x'.repeat(1025)]) {
     assert.throws(() => runStatusCommand(command), /Status command is invalid/);
+    assert.throws(() => runStatusJsonCommand(command), /Status command is invalid/);
   }
+});
+
+// Inner single quotes keep the payload readable on both sh and cmd.exe, which
+// each group the -e argument in double quotes.
+test('a JSON command answers with its stdout', async () => {
+  assert.deepEqual(
+    await runStatusJsonCommand(
+      'node -e "process.stdout.write(JSON.stringify({label:\'Hi\'}))"',
+    ),
+    { output: '{"label":"Hi"}' },
+  );
+
+  // A non-zero exit code makes the whole output worthless, whatever it said.
+  assert.deepEqual(
+    await runStatusJsonCommand(
+      'node -e "process.stdout.write(\'{"label":"Hi"}\');process.exit(3)"',
+    ),
+    { output: null },
+  );
+});
+
+test('a JSON command that talks past the cap is stopped and reports nothing', async () => {
+  // Eight kilobytes from a command that exits 0 proves the overflow guard,
+  // not the exit code, is what discards the answer.
+  assert.deepEqual(
+    await runStatusJsonCommand(
+      'node -e "process.stdout.write(\'a\'.repeat(8192))"',
+    ),
+    { output: null },
+  );
+});
+
+test('a hanging JSON command is killed and reports no output', async () => {
+  const started = Date.now();
+  const result = await runStatusJsonCommand(
+    'node -e "setTimeout(() => {}, 60000)"',
+    { timeoutMs: 250 },
+  );
+
+  assert.deepEqual(result, { output: null });
+  assert.ok(
+    Date.now() - started < 30_000,
+    'the command outlived its timeout',
+  );
 });

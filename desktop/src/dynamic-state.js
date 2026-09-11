@@ -8,9 +8,18 @@ const PROVIDERS = new Set([
   'clock',
   'focused-app',
   'status-command',
+  'status-json',
 ]);
 const MAX_COMMAND_LENGTH = 1024;
 const MAX_STATUS_STATES = 8;
+// A Material Symbols icon name, as the icon library itself writes them.
+const STATUS_JSON_ICON_PATTERN = /^[a-z0-9_]{1,64}$/;
+const STATUS_JSON_FIELDS = new Map([
+  ['key_color', 'color'],
+  ['text_color', 'labelColor'],
+  ['label', 'label'],
+  ['icon', 'icon'],
+]);
 // A poll costs a shell, so the floor keeps a mistyped interval from spawning
 // one every frame. The ceiling is an hour, past which nothing is "live".
 const MIN_STATUS_INTERVAL_SECONDS = 1;
@@ -104,6 +113,57 @@ function validateStatusStates(states) {
   });
 }
 
+// A JSON status command's whole answer, checked field by field before it
+// crosses into the renderer. Anything unexpected — an unknown field, a
+// malformed color, an over-long label — makes the whole answer invalid, which
+// reads the same as no answer: the key shows its saved appearance.
+function validateStatusJson(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('Status JSON is invalid.');
+  }
+
+  for (const field of Object.keys(value)) {
+    if (!STATUS_JSON_FIELDS.has(field)) {
+      throw new TypeError(`Status JSON field is invalid: ${field}.`);
+    }
+  }
+
+  const validated = {};
+
+  for (const [field, name] of STATUS_JSON_FIELDS) {
+    const raw = value[field];
+
+    if (raw === undefined) {
+      continue;
+    }
+
+    if (name === 'color' || name === 'labelColor') {
+      if (typeof raw !== 'string' || !COLOR_PATTERN.test(raw)) {
+        throw new TypeError('Status JSON color is invalid.');
+      }
+      validated[name] = raw;
+    } else if (name === 'label') {
+      if (
+        typeof raw !== 'string' ||
+        raw.length === 0 ||
+        raw.length > MAX_LABEL_LENGTH
+      ) {
+        throw new TypeError('Status JSON label is invalid.');
+      }
+      validated.label = raw;
+    } else if (
+      typeof raw !== 'string' ||
+      !STATUS_JSON_ICON_PATTERN.test(raw)
+    ) {
+      throw new TypeError('Status JSON icon is invalid.');
+    } else {
+      validated.icon = raw;
+    }
+  }
+
+  return validated;
+}
+
 // The exit code a key is currently showing. An unmatched code, a command that
 // could not run, and one killed for hanging all land here as null, and a key
 // with no appearance to show falls back to the one the user saved.
@@ -120,6 +180,28 @@ function statusAppearanceFor(config, code) {
 
   const { code: _code, ...appearance } = match;
   return appearance;
+}
+
+// Both polled providers ask the same two questions of their config, so they
+// share the asking: a command worth typing and an interval worth waiting.
+function validatePolledConfig(config) {
+  if (
+    typeof config.command !== 'string' ||
+    !config.command.trim() ||
+    config.command.length > MAX_COMMAND_LENGTH
+  ) {
+    throw new TypeError('Status command is invalid.');
+  }
+
+  if (
+    !Number.isInteger(config.intervalSeconds) ||
+    config.intervalSeconds < MIN_STATUS_INTERVAL_SECONDS ||
+    config.intervalSeconds > MAX_STATUS_INTERVAL_SECONDS
+  ) {
+    throw new TypeError('Status command interval is invalid.');
+  }
+
+  return { command: config.command, intervalSeconds: config.intervalSeconds };
 }
 
 function validateLiveState(config) {
@@ -145,29 +227,19 @@ function validateLiveState(config) {
     case 'focused-app':
       return { provider: 'focused-app' };
     case 'status-command': {
-      if (
-        typeof config.command !== 'string' ||
-        !config.command.trim() ||
-        config.command.length > MAX_COMMAND_LENGTH
-      ) {
-        throw new TypeError('Status command is invalid.');
-      }
-
-      if (
-        !Number.isInteger(config.intervalSeconds) ||
-        config.intervalSeconds < MIN_STATUS_INTERVAL_SECONDS ||
-        config.intervalSeconds > MAX_STATUS_INTERVAL_SECONDS
-      ) {
-        throw new TypeError('Status command interval is invalid.');
-      }
+      const polled = validatePolledConfig(config);
 
       return {
         provider: 'status-command',
-        command: config.command,
-        intervalSeconds: config.intervalSeconds,
+        ...polled,
         states: validateStatusStates(config.states),
       };
     }
+    case 'status-json':
+      return {
+        provider: 'status-json',
+        ...validatePolledConfig(config),
+      };
     default:
       throw new TypeError(`Unknown live state provider: ${config.provider}`);
   }
@@ -251,4 +323,5 @@ module.exports = {
   providerNames,
   statusAppearanceFor,
   validateLiveState,
+  validateStatusJson,
 };

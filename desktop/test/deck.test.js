@@ -2341,3 +2341,116 @@ test('a press re-runs the status command it just invalidated', async () => {
 
   assert.equal(runs, 1);
 });
+
+function jsonStatusRuntime(command = 'my-status.sh') {
+  const controller = createRuntime();
+  const key = {
+    index: 0,
+    label: 'Audio',
+    liveState: {
+      provider: 'status-json',
+      command,
+      intervalSeconds: 3,
+    },
+  };
+  controller.devices = {
+    aaaa11112222: {
+      activeProfileId: 'default',
+      profiles: {
+        default: { activePage: 0, pages: [{ rows: 1, cols: 1, keys: [key] }] },
+      },
+    },
+  };
+  controller.sessions.set('aaaa11112222', {
+    hello: { features: ['key-update'] },
+  });
+  return { controller, key };
+}
+
+test('a JSON status command paints the key from its answer', async () => {
+  const { controller, key } = jsonStatusRuntime();
+  const queued = [];
+  let answer = { label: 'HDMI', color: '#2f8f5b', icon: 'volume_up' };
+  controller.api = {
+    runStatusJsonCommand: async () => answer,
+  };
+  controller.renderIcon = async (name) =>
+    name === 'volume_up' ? 'data:image/webp;base64,AAAA' : null;
+  controller.queueLiveUpdate = (deviceId, update) => queued.push(update);
+  controller.onRenderSelectedLive = () => {};
+
+  await controller.runStatusCommand('aaaa11112222', 'default', 0, key);
+
+  assert.deepEqual(queued.at(-1).overlay, {
+    label: 'HDMI',
+    color: '#2f8f5b',
+    image: 'data:image/webp;base64,AAAA',
+    state: 'unknown',
+  });
+
+  // An icon the library does not know loses its field, not the answer.
+  answer = { label: 'Desk', icon: 'not_a_real_icon' };
+  await controller.runStatusCommand('aaaa11112222', 'default', 0, key);
+
+  assert.deepEqual(queued.at(-1).overlay, { label: 'Desk', state: 'unknown' });
+
+  // No answer at all clears the overlay, so the key falls back to the
+  // appearance the user saved rather than keeping a stale one.
+  answer = null;
+  await controller.runStatusCommand('aaaa11112222', 'default', 0, key);
+
+  assert.equal(queued.at(-1).overlay, null);
+});
+
+test('an unchanged JSON answer does not repaint the key', async () => {
+  const { controller, key } = jsonStatusRuntime();
+  const answer = { label: 'HDMI', color: '#2f8f5b' };
+  let paints = 0;
+  controller.api = { runStatusJsonCommand: async () => answer };
+  controller.renderIcon = async () => null;
+  controller.queueLiveUpdate = () => {
+    paints++;
+  };
+  controller.onRenderSelectedLive = () => {};
+
+  await controller.runStatusCommand('aaaa11112222', 'default', 0, key);
+  await controller.runStatusCommand('aaaa11112222', 'default', 0, key);
+  await controller.runStatusCommand('aaaa11112222', 'default', 0, key);
+
+  // One paint for the first answer and one for every later poll that agrees:
+  // the board is told only when what it shows would change.
+  assert.equal(paints, 1);
+});
+
+test('a JSON status command is polled by the same walk and press', async () => {
+  const { controller } = jsonStatusRuntime();
+  let runs = 0;
+  controller.api = {
+    runStatusJsonCommand: async () => {
+      runs++;
+      return { label: 'HDMI' };
+    },
+  };
+  controller.renderIcon = async () => null;
+  controller.queueLiveUpdate = () => {};
+  controller.onRenderSelectedLive = () => {};
+
+  // The walk visits the JSON provider under the exit-code one's rules: the
+  // in-flight run is never started twice.
+  controller.runDueStatusCommands();
+  controller.runDueStatusCommands();
+  assert.equal(runs, 1);
+
+  // Let the in-flight run settle before the press, so the counts read clean.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(runs, 1);
+
+  // And a press does not wait out the interval it just invalidated.
+  controller.refreshLiveAfterSuccess('aaaa11112222', {
+    profileId: 'default',
+    page: 0,
+    index: 0,
+  });
+
+  assert.equal(runs, 2);
+});

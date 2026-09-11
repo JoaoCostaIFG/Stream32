@@ -9,6 +9,7 @@ const {
   providerNames,
   statusAppearanceFor,
   validateLiveState,
+  validateStatusJson,
 } = require('../src/dynamic-state');
 
 test('live overlays merge without mutating persisted keys', () => {
@@ -135,6 +136,73 @@ test('an exit code with no state leaves the saved key showing', () => {
   assert.equal(statusAppearanceFor(config, null), null);
   assert.equal(statusAppearanceFor(config, undefined), null);
   assert.equal(statusAppearanceFor({ provider: 'clock' }, 0), null);
+});
+
+test('a JSON status answer is kept only when it is exactly the schema', () => {
+  assert.deepEqual(validateStatusJson({
+    key_color: '#2f8f5b',
+    text_color: '#ffffff',
+    label: 'HDMI',
+    icon: 'volume_up',
+  }), {
+    color: '#2f8f5b',
+    labelColor: '#ffffff',
+    label: 'HDMI',
+    icon: 'volume_up',
+  });
+
+  // Every field is optional, so a label alone is a whole answer.
+  assert.deepEqual(validateStatusJson({ label: 'Ready' }), { label: 'Ready' });
+  assert.deepEqual(validateStatusJson({}), {});
+  assert.deepEqual(validateStatusJson({ icon: 'play_circle' }), {
+    icon: 'play_circle',
+  });
+});
+
+test('a JSON status answer outside the schema is rejected whole', () => {
+  const base = { label: 'Ready' };
+
+  // An unknown field could carry anything, so it is a mistake rather than a
+  // preference: the caller treats a rejection like no answer at all.
+  assert.throws(() => validateStatusJson({ ...base, stdout: 'hi' }), /field/);
+  assert.throws(() => validateStatusJson({ key_colour: '#2f8f5b' }), /field/);
+  assert.throws(() => validateStatusJson({ key_color: 'green' }), /color/);
+  assert.throws(() => validateStatusJson({ text_color: '#2F8F5B' }), /color/);
+  assert.throws(() => validateStatusJson({ label: '' }), /label/);
+  assert.throws(() => validateStatusJson({ label: 'x'.repeat(33) }), /label/);
+  assert.throws(() => validateStatusJson({ icon: 'Not A Name' }), /icon/);
+  assert.throws(() => validateStatusJson({ icon: 'x'.repeat(65) }), /icon/);
+  assert.throws(() => validateStatusJson(null), /invalid/);
+  assert.throws(() => validateStatusJson('{"label":"Hi"}'), /invalid/);
+  assert.throws(() => validateStatusJson([{ label: 'Hi' }]), /invalid/);
+});
+
+test('JSON status configurations share the polled-command bounds', () => {
+  assert.deepEqual(validateLiveState({
+    provider: 'status-json',
+    command: 'my-status.sh',
+    intervalSeconds: 5,
+  }), {
+    provider: 'status-json',
+    command: 'my-status.sh',
+    intervalSeconds: 5,
+  });
+
+  const base = { provider: 'status-json', command: 'x', intervalSeconds: 3 };
+
+  assert.throws(() => validateLiveState({ ...base, command: '' }), /command/);
+  assert.throws(
+    () => validateLiveState({ ...base, command: 'x'.repeat(1025) }),
+    /command/,
+  );
+  assert.throws(
+    () => validateLiveState({ ...base, intervalSeconds: 0 }),
+    /interval/,
+  );
+  assert.throws(
+    () => validateLiveState({ ...base, intervalSeconds: 3601 }),
+    /interval/,
+  );
 });
 
 test('clock formatting and next-minute scheduling are deterministic', () => {

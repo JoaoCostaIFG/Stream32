@@ -94,6 +94,9 @@ colors, state, and artwork never rewrite profile JSON or flash artwork.
   its exit code, so a key can follow something Stream32 has no other way to
   know. It is the one provider that can tell you about state changed by
   something other than the deck.
+- **JSON status command** runs a command you write and reads one small JSON
+  object from its output, so a key can show a measured value rather than a
+  picked state: the current volume, a temperature, a price, a name.
 
 Every live appearance picks artwork the same two ways the saved key does: from
 the Material icon library, or from a file through the same bounded upload
@@ -219,6 +222,31 @@ difference between the two: an app opened from Finder or the Dock is started by
 something that runs unattended. A command that drives another app through
 `osascript` also needs Automation permission, which macOS asks for once, so run
 it by hand before pointing a key at it.
+
+### JSON status commands
+
+Where a status command answers with an exit code, a **JSON status command**
+answers with one small JSON object on stdout, printed and exited `0`:
+
+```json
+{"key_color": "#2f8f5b", "text_color": "#ffffff", "label": "HDMI", "icon": "volume_up"}
+```
+
+Every field is optional. `key_color` and `text_color` are `#rrggbb` colors,
+`label` is at most 32 characters, and `icon` is a name from the same icon
+library the key editor uses — the artwork is drawn for you, exactly as if you
+had picked it there. The same intervals, timeout, and shell rules as a status
+command apply, and a press of the key re-runs it at once.
+
+Only an answer that is exactly this shape counts. A non-zero exit code, output
+that is not one parseable object of known fields, more than 4 KB, and a command
+that hangs past five seconds are all the same answer: none at all, and the key
+keeps the appearance you saved until a later check succeeds. Output past the
+cap is never buffered and nothing a command prints is ever logged.
+
+Because the whole answer is checked before it is used, a JSON status command
+cannot turn a key into a screen for whatever a tool feels like printing: four
+bounded fields cross into the appearance, and nothing else crosses anywhere.
 
 ## Multi Actions
 
