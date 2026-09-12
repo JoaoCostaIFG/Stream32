@@ -238,15 +238,31 @@ library the key editor uses — the artwork is drawn for you, exactly as if you
 had picked it there. The same intervals, timeout, and shell rules as a status
 command apply, and a press of the key re-runs it at once.
 
+Artwork beyond the icon library has its own field, `image`, which outranks
+`icon` when both are present. It takes two shapes:
+
+- The **name of an image slot** the key itself carries. Add up to eight in
+  the key editor — uploaded or picked from the icon library, through the same
+  bounded pipeline as any other key artwork — and the command only says which
+  to show: `{"image": "logo"}`. A poll stays a few bytes, the bytes never
+  travel with the answer, and swapping the artwork under a name shows up on
+  the next refresh without waiting for a poll. A name the key does not know
+  is dropped, leaving the rest of the answer in force.
+- A **`data:` image URL the answer carries itself**, at most 24 KB, for
+  artwork only the command can draw — a graph, a progress bar, a badge. Emit
+  it only when it changes: an answer that re-encodes the same picture
+  repaints the key every poll, because the bytes differ.
+
 Only an answer that is exactly this shape counts. A non-zero exit code, output
-that is not one parseable object of known fields, more than 4 KB, and a command
+that is not one parseable object of known fields, more than 32 KB, and a command
 that hangs past five seconds are all the same answer: none at all, and the key
 keeps the appearance you saved until a later check succeeds. Output past the
 cap is never buffered and nothing a command prints is ever logged.
 
 Because the whole answer is checked before it is used, a JSON status command
-cannot turn a key into a screen for whatever a tool feels like printing: four
-bounded fields cross into the appearance, and nothing else crosses anywhere.
+cannot turn a key into a screen for whatever a tool feels like printing:
+bounded, named fields cross into the appearance, and nothing else crosses
+anywhere.
 
 ## Multi Actions
 

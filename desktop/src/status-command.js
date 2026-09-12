@@ -6,10 +6,11 @@ const { spawn } = require('node:child_process');
 
 const MAX_COMMAND_LENGTH = 1024;
 const STATUS_COMMAND_TIMEOUT_MS = 5000;
-// A JSON answer is four small fields, so four kilobytes is already generous;
-// the cap exists so a command that never stops talking cannot grow a buffer
+// A JSON answer is four small fields, or those fields plus one inline image
+// of at most 24 KB, so 32 KB covers the largest answer the schema allows. The
+// cap exists so a command that never stops talking cannot grow a buffer
 // nobody asked to fill.
-const MAX_JSON_OUTPUT_BYTES = 4096;
+const MAX_JSON_OUTPUT_BYTES = 32_768;
 
 // Killing the shell does not kill what the shell started: `sh -c` forks for
 // anything but the simplest line, and cmd.exe starts even a single command as

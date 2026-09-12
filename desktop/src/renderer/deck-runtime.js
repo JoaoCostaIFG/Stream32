@@ -293,7 +293,22 @@ class DeckRuntime {
         const answer = this.liveValues.get(
           this.liveKey(deviceId, profileId, page, key.index),
         );
-        return answer ? { ...answer.overlay, state: 'unknown' } : null;
+
+        if (!answer) {
+          return null;
+        }
+
+        const overlay = { ...answer.overlay };
+
+        if (answer.imageName) {
+          const image = config.images?.[answer.imageName];
+
+          if (image) {
+            overlay.image = image;
+          }
+        }
+
+        return { ...overlay, state: 'unknown' };
       }
       default:
         return null;
@@ -474,7 +489,21 @@ class DeckRuntime {
       overlay.labelColor = validated.labelColor;
     }
 
-    if (validated.icon && this.renderIcon) {
+    // "image" outranks "icon": artwork the answer names itself beats a glyph
+    // the answer would only suggest.
+    let imageName;
+
+    if (validated.image) {
+      if (validated.image.startsWith('data:')) {
+        overlay.image = validated.image;
+      } else {
+        // A slot name resolves at overlay time rather than here, so artwork
+        // swapped under a name repaints on the next refresh without waiting
+        // for a poll to notice. An unknown name resolves to nothing, which
+        // drops the field the way an unknown icon name drops its own.
+        imageName = validated.image;
+      }
+    } else if (validated.icon && this.renderIcon) {
       // A name the icon library does not know loses its field rather than the
       // whole answer: the rest still describes the key truthfully.
       const image = await this.renderIcon(validated.icon);
@@ -484,7 +513,11 @@ class DeckRuntime {
       }
     }
 
-    return { signature: JSON.stringify(overlay), overlay };
+    return {
+      signature: JSON.stringify(imageName ? { ...overlay, imageName } : overlay),
+      overlay,
+      ...(imageName ? { imageName } : {}),
+    };
   }
 
   queueLiveUpdate(deviceId, update) {

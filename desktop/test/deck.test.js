@@ -2454,3 +2454,86 @@ test('a JSON status command is polled by the same walk and press', async () => {
 
   assert.equal(runs, 2);
 });
+
+test('an image answer resolves through the key or arrives as its own bytes', async () => {
+  const { controller, key } = jsonStatusRuntime();
+  const logo = 'data:image/webp;base64,LOGO';
+  const badge = 'data:image/webp;base64,BADGE';
+  key.liveState.images = { logo };
+  const queued = [];
+  let answer = { image: 'logo', label: 'Branded' };
+  controller.api = {
+    runStatusJsonCommand: async () => answer,
+  };
+  // renderIcon must never be called when "image" is present: image outranks
+  // icon, and the slot resolves without the font at all.
+  let iconCalls = 0;
+  controller.renderIcon = async () => {
+    iconCalls++;
+    return null;
+  };
+  controller.queueLiveUpdate = (deviceId, update) => queued.push(update);
+  controller.onRenderSelectedLive = () => {};
+
+  // A named slot resolves against the key's own artwork.
+  await controller.runStatusCommand('aaaa11112222', 'default', 0, key);
+
+  assert.deepEqual(queued.at(-1).overlay, {
+    label: 'Branded',
+    image: logo,
+    state: 'unknown',
+  });
+  assert.equal(iconCalls, 0);
+
+  // A data URL the answer carries itself passes straight through.
+  answer = { image: badge };
+  await controller.runStatusCommand('aaaa11112222', 'default', 0, key);
+
+  assert.deepEqual(queued.at(-1).overlay, {
+    image: badge,
+    state: 'unknown',
+  });
+
+  // A slot name the key does not know loses its field, not the answer.
+  answer = { image: 'no-such-slot', label: 'Named' };
+  await controller.runStatusCommand('aaaa11112222', 'default', 0, key);
+
+  assert.deepEqual(queued.at(-1).overlay, { label: 'Named', state: 'unknown' });
+
+  // Image beats icon: when both are present, the icon is never rendered and
+  // the image's resolution is what the key shows.
+  answer = { image: 'logo', icon: 'volume_up' };
+  await controller.runStatusCommand('aaaa11112222', 'default', 0, key);
+
+  assert.deepEqual(queued.at(-1).overlay, {
+    image: logo,
+    state: 'unknown',
+  });
+  assert.equal(iconCalls, 0);
+});
+
+test('swapping a slot image repaints without waiting for a poll', async () => {
+  const { controller, key } = jsonStatusRuntime();
+  const logo = 'data:image/webp;base64,LOGO';
+  const swapped = 'data:image/webp;base64,SWAPPED';
+  key.liveState.images = { logo };
+  const queued = [];
+  controller.api = {
+    runStatusJsonCommand: async () => ({ image: 'logo' }),
+  };
+  controller.renderIcon = async () => null;
+  controller.queueLiveUpdate = (deviceId, update) => queued.push(update);
+  controller.onRenderSelectedLive = () => {};
+
+  // Establish the slot's current artwork.
+  await controller.runStatusCommand('aaaa11112222', 'default', 0, key);
+  assert.equal(queued.at(-1).overlay.image, logo);
+
+  // An edit swaps the bytes under the name. No new poll runs: the lease walk
+  // re-queues the overlay, and the slot resolves at overlay time against the
+  // new bytes, so the change shows up at once.
+  key.liveState.images.logo = swapped;
+  controller.refreshLiveStates('aaaa11112222');
+
+  assert.equal(queued.at(-1).overlay.image, swapped);
+});

@@ -93,14 +93,35 @@ test('a JSON command answers with its stdout', async () => {
 });
 
 test('a JSON command that talks past the cap is stopped and reports nothing', async () => {
-  // Eight kilobytes from a command that exits 0 proves the overflow guard,
+  // Forty kilobytes from a command that exits 0 proves the overflow guard,
   // not the exit code, is what discards the answer.
   assert.deepEqual(
     await runStatusJsonCommand(
-      'node -e "process.stdout.write(\'a\'.repeat(8192))"',
+      'node -e "process.stdout.write(\'a\'.repeat(40000))"',
     ),
     { output: null },
   );
+});
+
+test('a JSON answer big enough to carry an inline image still arrives', async () => {
+  // The cap has room for the largest inline image the schema allows. A real
+  // command prints this from a script file rather than an inline -e payload
+  // (the command line itself is bounded at 1024 chars), so this writes one.
+  const { writeFileSync, rmSync } = require('node:fs');
+  const { tmpdir } = require('node:os');
+  const { join } = require('node:path');
+  const script = join(tmpdir(), `stream32-json-image-${process.pid}.js`);
+  const payload = `{"image":"data:image/webp;base64,${'A'.repeat(20 * 1024)}"}`;
+  writeFileSync(script, `process.stdout.write(${JSON.stringify(payload)})`);
+
+  try {
+    assert.equal(
+      (await runStatusJsonCommand(`node "${script}"`)).output,
+      payload,
+    );
+  } finally {
+    rmSync(script, { force: true });
+  }
 });
 
 test('a hanging JSON command is killed and reports no output', async () => {

@@ -159,6 +159,30 @@ test('a JSON status answer is kept only when it is exactly the schema', () => {
   });
 });
 
+test('an image answer is a slot name or a bounded data URL', () => {
+  // A slot name: format-checked here, resolved against the key later.
+  assert.deepEqual(validateStatusJson({ image: 'logo' }), { image: 'logo' });
+  assert.deepEqual(
+    validateStatusJson({ image: 'brand-mark_2' }),
+    { image: 'brand-mark_2' },
+  );
+
+  // A data URL the answer carries itself, bounded tighter than key artwork.
+  const url = `data:image/webp;base64,${'A'.repeat(1024)}`;
+  assert.deepEqual(validateStatusJson({ image: url }), { image: url });
+
+  const oversized = `data:image/webp;base64,${'A'.repeat(24 * 1024 + 1)}`;
+  for (const rejected of [
+    oversized,
+    'data:image/svg+xml;base64,PHN2Zw==',
+    'data:image/webp;base64,not base64!!',
+    'Not A Name',
+    '',
+  ]) {
+    assert.throws(() => validateStatusJson({ image: rejected }), /image/);
+  }
+});
+
 test('a JSON status answer outside the schema is rejected whole', () => {
   const base = { label: 'Ready' };
 
@@ -203,6 +227,66 @@ test('JSON status configurations share the polled-command bounds', () => {
     () => validateLiveState({ ...base, intervalSeconds: 3601 }),
     /interval/,
   );
+});
+
+test('image slots are bounded, named, and dropped while still pending', () => {
+  const url = (letter) => `data:image/png;base64,${letter.repeat(8)}`;
+
+  assert.deepEqual(validateLiveState({
+    provider: 'status-json',
+    command: 'x',
+    intervalSeconds: 3,
+    images: { logo: url('A'), badge: url('B') },
+  }), {
+    provider: 'status-json',
+    command: 'x',
+    intervalSeconds: 3,
+    images: { logo: url('A'), badge: url('B') },
+  });
+
+  const base = { provider: 'status-json', command: 'x', intervalSeconds: 3 };
+
+  // The editor adds a placeholder row before artwork is chosen; the saved
+  // profile never carries one, and a map of nothing pending at all is not
+  // saved either.
+  assert.deepEqual(
+    validateLiveState({
+      ...base,
+      images: { logo: url('A'), pending: '' },
+    }),
+    {
+      provider: 'status-json',
+      command: 'x',
+      intervalSeconds: 3,
+      images: { logo: url('A') },
+    },
+  );
+  assert.equal(
+    validateLiveState({ ...base, images: { pending: '' } }).images,
+    undefined,
+  );
+
+  // As many slots as the exit-code provider has states.
+  const eight = Object.fromEntries(
+    Array.from({ length: 8 }, (unused, index) => [`i${index}`, url('A')]),
+  );
+  assert.throws(
+    () => validateLiveState({ ...base, images: { ...eight, one_more: url('A') } }),
+    /images/,
+  );
+
+  for (const invalid of [
+    { 'Not A Name': url('A') },
+    { logo: 'green' },
+    { logo: 42 },
+    'nope',
+    [{ logo: url('A') }],
+  ]) {
+    assert.throws(
+      () => validateLiveState({ ...base, images: invalid }),
+      /image/,
+    );
+  }
 });
 
 test('clock formatting and next-minute scheduling are deterministic', () => {

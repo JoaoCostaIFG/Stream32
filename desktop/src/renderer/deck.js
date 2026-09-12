@@ -7,10 +7,12 @@ const {
   moveKey,
   pasteKey,
 } = require('./key-clipboard');
+const { LiveJsonImages } = require('./live-json-images');
 const { LiveStatusFields } = require('./live-status-fields');
 const { remapActionAfterPageDeletion } = require('../action-model');
 const { MAX_NAME_LENGTH } = require('../deck-model');
 const {
+  MAX_STATUS_JSON_IMAGES,
   MAX_STATUS_STATES,
   mergeKeyOverlay,
 } = require('../dynamic-state');
@@ -220,6 +222,18 @@ class DeckController {
       document.querySelector('#deck-live-json-command');
     this.liveJsonInterval =
       document.querySelector('#deck-live-json-interval');
+    this.liveJsonAdd = document.querySelector('#deck-live-json-add');
+    this.liveJsonImages = new LiveJsonImages({
+      document,
+      container: document.querySelector('#deck-live-json-images'),
+      onChange: (mutate) => this.updateJsonImages(mutate),
+      readImageFile: (file) => this.readImageFile(file),
+      openIconLibrary: (apply) => this.openIconLibrary(apply),
+      onError: (error) => this.setSyncStatus(
+        `Could not read live image: ${error.message}`,
+        'error',
+      ),
+    });
     this.liveStatusStates = new LiveStatusFields({
       document,
       container: document.querySelector('#deck-live-status-states'),
@@ -777,6 +791,9 @@ class DeckController {
     });
     this.liveStatusAdd.addEventListener('click', () => {
       this.liveStatusStates.add();
+    });
+    this.liveJsonAdd.addEventListener('click', () => {
+      this.liveJsonImages.add();
     });
     for (const control of [
       this.liveOnLabel,
@@ -1599,6 +1616,26 @@ class DeckController {
     });
   }
 
+  updateJsonImages(mutate) {
+    this.updateSelectedKey((key) => {
+      if (key.liveState?.provider !== 'status-json') {
+        return;
+      }
+
+      const images = { ...(key.liveState.images || {}) };
+
+      if (mutate(images)) {
+        // Pending slots (empty values) ride the draft so their rows stay
+        // editable; the validator drops them before anything is saved.
+        if (Object.keys(images).length > 0) {
+          key.liveState.images = images;
+        } else {
+          delete key.liveState.images;
+        }
+      }
+    });
+  }
+
   applyActionSelection(action, appearance) {
     const deviceId = this.selectedDeviceId;
     const pageIndex = this.selectedPage;
@@ -2363,6 +2400,12 @@ class DeckController {
       : '';
     this.liveJsonInterval.value = String(
       live?.provider === 'status-json' ? live.intervalSeconds : 3,
+    );
+    this.liveJsonAdd.disabled =
+      live?.provider !== 'status-json' ||
+      Object.keys(live.images || {}).length >= MAX_STATUS_JSON_IMAGES;
+    this.liveJsonImages.render(
+      live?.provider === 'status-json' ? live.images || {} : {},
     );
     const session = this.runtime.sessionFor(this.selectedDeviceId);
     this.liveStatus.textContent = live
